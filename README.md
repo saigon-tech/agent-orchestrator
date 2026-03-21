@@ -63,6 +63,28 @@ To install from source (for contributors):
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
+
+**Manual build from source:**
+
+```bash
+git clone https://github.com/ComposioHQ/agent-orchestrator.git
+cd agent-orchestrator
+
+# 1. Install pnpm (required package manager)
+npm install -g pnpm@9.15.4
+
+# 2. Install all workspace dependencies
+pnpm install
+
+# 3. Build all packages (core → plugins → cli → web)
+pnpm run build
+
+# 4. Link the ao binary globally
+cd packages/ao && npm link
+
+# 5. Verify
+ao --version
+```
 </details>
 
 ### Start
