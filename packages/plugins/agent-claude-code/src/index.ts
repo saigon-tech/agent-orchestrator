@@ -670,6 +670,10 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--model", shellEscape(config.model));
       }
 
+      if (config.settings) {
+        parts.push("--settings", shellEscape(config.settings));
+      }
+
       if (config.systemPromptFile) {
         // Use shell command substitution to read from file at launch time.
         // This avoids tmux truncation when inlining 2000+ char prompts.

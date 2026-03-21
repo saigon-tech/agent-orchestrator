@@ -100,6 +100,7 @@ const AgentSpecificConfigSchema = z
     permissions: AgentPermissionSchema,
     model: z.string().optional(),
     orchestratorModel: z.string().optional(),
+    settings: z.string().optional(),
     opencodeSessionId: z.string().optional(),
   })
   .passthrough();

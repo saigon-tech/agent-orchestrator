@@ -373,6 +373,11 @@ export interface AgentLaunchConfig {
    * Use --subagent flag to select the subagent.
    */
   subagent?: string;
+  /**
+   * Path to a custom settings file for the agent.
+   * - Claude Code: --settings <path>
+   */
+  settings?: string;
 }
 
 export interface WorkspaceHooksConfig {
@@ -1042,6 +1047,7 @@ export interface AgentSpecificConfig {
   permissions?: AgentPermissionMode;
   model?: string;
   orchestratorModel?: string;
+  settings?: string;
   [key: string]: unknown;
 }
 
