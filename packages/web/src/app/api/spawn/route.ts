@@ -25,11 +25,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (body.settings !== undefined && typeof body.settings !== "string") {
+    return jsonWithCorrelation({ error: "settings must be a string" }, { status: 400 }, correlationId);
+  }
+
   try {
     const { config, sessionManager } = await getServices();
     const session = await sessionManager.spawn({
       projectId: body.projectId as string,
       issueId: (body.issueId as string) ?? undefined,
+      settings: (body.settings as string) ?? undefined,
     });
 
     recordApiObservation({

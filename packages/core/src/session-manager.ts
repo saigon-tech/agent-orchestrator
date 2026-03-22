@@ -1052,7 +1052,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       prompt: composedPrompt,
       permissions: selection.permissions,
       model: selection.model,
-      settings: selection.agentConfig.settings,
+      settings: spawnConfig.settings ?? selection.agentConfig.settings,
       subagent: spawnConfig.subagent ?? selection.subagent,
     };
 

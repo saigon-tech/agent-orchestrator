@@ -189,6 +189,8 @@ export interface SessionSpawnConfig {
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
   subagent?: string;
+  /** Override settings file path for this session (e.g. Claude Code --settings) */
+  settings?: string;
   /** Decomposition context — ancestor task chain (passed to prompt builder) */
   lineage?: string[];
   /** Decomposition context — sibling task descriptions (passed to prompt builder) */
