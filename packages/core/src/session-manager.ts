@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { statSync, existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -1056,6 +1056,29 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       subagent: spawnConfig.subagent ?? selection.subagent,
     };
 
+    // Read env vars from settings file if present
+    const settingsEnv: Record<string, string> = {};
+    const settingsPath = agentLaunchConfig.settings;
+    if (settingsPath) {
+      try {
+        const resolvedPath = resolve(settingsPath);
+        const raw = readFileSync(resolvedPath, "utf-8");
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && "env" in parsed) {
+          const envObj = (parsed as { env: unknown }).env;
+          if (envObj && typeof envObj === "object") {
+            for (const [key, value] of Object.entries(envObj as Record<string, unknown>)) {
+              if (typeof value === "string") {
+                settingsEnv[key] = value;
+              }
+            }
+          }
+        }
+      } catch {
+        // Silently skip if file is missing/invalid — the --settings flag handles its own validation
+      }
+    }
+
     let handle: RuntimeHandle;
     try {
       const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
@@ -1066,6 +1089,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         workspacePath,
         launchCommand,
         environment: {
+          ...settingsEnv,
           ...environment,
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
