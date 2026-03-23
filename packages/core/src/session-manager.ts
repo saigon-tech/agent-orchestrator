@@ -1052,7 +1052,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       prompt: composedPrompt,
       permissions: selection.permissions,
       model: selection.model,
-      settings: spawnConfig.settings ?? selection.agentConfig.settings,
+      settings: (() => {
+        const raw = spawnConfig.settings ?? selection.agentConfig.settings;
+        // Resolve relative paths against the source project so settings files
+        // don't need to be committed to git (they may contain API tokens).
+        return raw ? resolve(project.path, raw) : undefined;
+      })(),
       subagent: spawnConfig.subagent ?? selection.subagent,
     };
 
@@ -1061,7 +1066,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const settingsPath = agentLaunchConfig.settings;
     if (settingsPath) {
       try {
-        const resolvedPath = resolve(settingsPath);
+        const resolvedPath = settingsPath;
         const raw = readFileSync(resolvedPath, "utf-8");
         const parsed: unknown = JSON.parse(raw);
         if (parsed && typeof parsed === "object" && "env" in parsed) {
