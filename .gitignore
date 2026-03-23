@@ -65,3 +65,7 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .opencode/
+
+node-compile-cache/
+profiles/
+AO-CLI-AND-API-REFERENCE.md
