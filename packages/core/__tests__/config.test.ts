@@ -19,6 +19,11 @@ describe("Config Loading", () => {
     originalCwd = process.cwd();
     originalEnv = { ...process.env };
 
+    // Isolate from real config files: clear env override and redirect HOME
+    // so findConfigFile won't discover configs in real home directory
+    delete process.env["AO_CONFIG_PATH"];
+    process.env["HOME"] = testDir;
+
     // Change to test directory
     process.chdir(testDir);
   });
