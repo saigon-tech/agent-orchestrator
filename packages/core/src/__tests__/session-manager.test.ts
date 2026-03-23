@@ -936,6 +936,76 @@ describe("spawn", () => {
     );
   });
 
+  it("reads env vars from settings file and merges into spawn environment", async () => {
+    const settingsPath = join(tmpDir, "test-settings.json");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_MODEL: "qwen3.5-plus",
+          ANTHROPIC_BASE_URL: "https://example.com",
+        },
+      }),
+    );
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", settings: settingsPath });
+
+    const createCall = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      environment: Record<string, string>;
+    };
+    expect(createCall.environment).toMatchObject({
+      ANTHROPIC_MODEL: "qwen3.5-plus",
+      ANTHROPIC_BASE_URL: "https://example.com",
+    });
+  });
+
+  it("agent plugin env overrides settings file env", async () => {
+    const settingsPath = join(tmpDir, "test-settings-override.json");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        env: {
+          AGENT_VAR: "from-settings",
+          CUSTOM_VAR: "from-settings",
+        },
+      }),
+    );
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", settings: settingsPath });
+
+    const createCall = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      environment: Record<string, string>;
+    };
+    // AGENT_VAR from agent plugin ("1") should override settings file value
+    expect(createCall.environment.AGENT_VAR).toBe("1");
+    // CUSTOM_VAR from settings file should be present
+    expect(createCall.environment.CUSTOM_VAR).toBe("from-settings");
+  });
+
+  it("spawns successfully when settings file has no env section", async () => {
+    const settingsPath = join(tmpDir, "test-settings-no-env.json");
+    writeFileSync(settingsPath, JSON.stringify({ model: "some-model" }));
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app", settings: settingsPath });
+
+    expect(session.status).toBe("spawning");
+    expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
+  it("spawns successfully when settings file does not exist", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({
+      projectId: "my-app",
+      settings: join(tmpDir, "nonexistent-settings.json"),
+    });
+
+    expect(session.status).toBe("spawning");
+    expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
   it("validates issue exists when issueId provided", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",
