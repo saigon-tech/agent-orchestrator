@@ -27,6 +27,12 @@ import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
 
+/**
+ * In-flight PR fetch deduplication map.
+ * If two requests ask for the same PR simultaneously, they share one fetch.
+ */
+const inFlightPRFetches = new Map<string, Promise<PREnrichmentData | null>>();
+
 /** Resolve which project a session belongs to. */
 export function resolveProject(
   core: Session,
@@ -117,8 +123,95 @@ function basicPRToDashboard(pr: PRInfo): DashboardPR {
 }
 
 /**
+ * Fetch PR enrichment data from SCM with in-flight deduplication.
+ * If the same PR is already being fetched, returns the same promise.
+ * Results are cached; rate-limit failures are cached for 60 min to back off.
+ */
+async function fetchPREnrichmentData(
+  scm: SCM,
+  pr: PRInfo,
+  cacheKey: string,
+): Promise<PREnrichmentData | null> {
+  // Check cache first (fast path — no lock needed)
+  const cached = prCache.get(cacheKey);
+  if (cached) return cached;
+
+  // Deduplicate concurrent fetches for the same PR
+  const existing = inFlightPRFetches.get(cacheKey);
+  if (existing) return existing;
+
+  const fetchPromise = (async (): Promise<PREnrichmentData | null> => {
+    // Re-check cache inside the lock in case another request populated it
+    const rechecked = prCache.get(cacheKey);
+    if (rechecked) return rechecked;
+
+    const results = await Promise.allSettled([
+      scm.getPRSummary
+        ? scm.getPRSummary(pr)
+        : scm.getPRState(pr).then((state) => ({ state, title: "", additions: 0, deletions: 0 })),
+      scm.getCIChecks(pr),
+      scm.getCISummary(pr),
+      scm.getReviewDecision(pr),
+      scm.getMergeability(pr),
+      scm.getPendingComments(pr),
+    ]);
+
+    const [summaryR, checksR, ciR, reviewR, mergeR, commentsR] = results;
+
+    const failedCount = results.filter((r) => r.status === "rejected").length;
+    const mostFailed = failedCount >= results.length / 2;
+
+    if (mostFailed) {
+      const rejectedResults = results.filter(
+        (r) => r.status === "rejected",
+      ) as PromiseRejectedResult[];
+      const firstError = rejectedResults[0]?.reason;
+      console.warn(
+        `[enrichSessionPR] ${failedCount}/${results.length} API calls failed for PR #${pr.number} (rate limited or unavailable):`,
+        String(firstError),
+      );
+    }
+
+    // Build enrichment data from successful results
+    const data: PREnrichmentData = {
+      state: summaryR.status === "fulfilled" ? summaryR.value.state : "open",
+      title: summaryR.status === "fulfilled" && summaryR.value.title ? summaryR.value.title : pr.title,
+      additions: summaryR.status === "fulfilled" ? summaryR.value.additions : 0,
+      deletions: summaryR.status === "fulfilled" ? summaryR.value.deletions : 0,
+      ciChecks: checksR.status === "fulfilled"
+        ? checksR.value.map((c) => ({ name: c.name, status: c.status, url: c.url }))
+        : [],
+      ciStatus: ciR.status === "fulfilled" ? ciR.value : "none",
+      reviewDecision: reviewR.status === "fulfilled" ? reviewR.value : "none",
+      mergeability: mergeR.status === "fulfilled"
+        ? mergeR.value
+        : { mergeable: false, ciPassing: false, approved: false, noConflicts: true, blockers: ["Merge status unavailable"] },
+      unresolvedThreads: commentsR.status === "fulfilled" ? commentsR.value.length : 0,
+      unresolvedComments: commentsR.status === "fulfilled"
+        ? commentsR.value.map((c) => ({ url: c.url, path: c.path ?? "", author: c.author, body: c.body }))
+        : [],
+    };
+
+    if (mostFailed && !data.mergeability.blockers.includes("API rate limited or unavailable")) {
+      data.mergeability.blockers.push("API rate limited or unavailable");
+    }
+
+    const ttl = mostFailed ? 60 * 60_000 : undefined; // 60 min on rate limit; default (5 min) on success
+    prCache.set(cacheKey, data, ttl);
+    return data;
+  })();
+
+  inFlightPRFetches.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    inFlightPRFetches.delete(cacheKey);
+  }
+}
+
+/**
  * Enrich a DashboardSession's PR with live data from the SCM plugin.
- * Uses cache to reduce API calls and handles rate limit errors gracefully.
+ * Uses cache and in-flight deduplication to reduce API calls.
  */
 export async function enrichSessionPR(
   dashboard: DashboardSession,
@@ -133,142 +226,35 @@ export async function enrichSessionPR(
   // Check cache first
   const cached = prCache.get(cacheKey);
   if (cached && dashboard.pr) {
-    dashboard.pr.state = cached.state;
-    dashboard.pr.title = cached.title;
-    dashboard.pr.additions = cached.additions;
-    dashboard.pr.deletions = cached.deletions;
-    dashboard.pr.ciStatus = cached.ciStatus;
-    dashboard.pr.ciChecks = cached.ciChecks;
-    dashboard.pr.reviewDecision = cached.reviewDecision;
-    dashboard.pr.mergeability = cached.mergeability;
-    dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
-    dashboard.pr.unresolvedComments = cached.unresolvedComments;
+    applyPREnrichment(dashboard, cached);
     return true;
   }
 
   // Cache miss — if cacheOnly, signal caller to refresh in background
   if (opts?.cacheOnly) return false;
 
-  // Fetch from SCM
-  const results = await Promise.allSettled([
-    scm.getPRSummary
-      ? scm.getPRSummary(pr)
-      : scm.getPRState(pr).then((state) => ({ state, title: "", additions: 0, deletions: 0 })),
-    scm.getCIChecks(pr),
-    scm.getCISummary(pr),
-    scm.getReviewDecision(pr),
-    scm.getMergeability(pr),
-    scm.getPendingComments(pr),
-  ]);
-
-  const [summaryR, checksR, ciR, reviewR, mergeR, commentsR] = results;
-
-  // Check if most critical requests failed (likely rate limit)
-  // Note: Some methods (like getCISummary) return fallback values instead of rejecting,
-  // so we can't rely on "all rejected" — check if majority failed instead
-  const failedCount = results.filter((r) => r.status === "rejected").length;
-  const mostFailed = failedCount >= results.length / 2;
-
-  if (mostFailed) {
-    const rejectedResults = results.filter(
-      (r) => r.status === "rejected",
-    ) as PromiseRejectedResult[];
-    const firstError = rejectedResults[0]?.reason;
-    console.warn(
-      `[enrichSessionPR] ${failedCount}/${results.length} API calls failed for PR #${pr.number} (rate limited or unavailable):`,
-      String(firstError),
-    );
-    // Don't return early — apply any successful results below
-  }
-
-  // Apply successful results
-  if (summaryR.status === "fulfilled") {
-    dashboard.pr.state = summaryR.value.state;
-    dashboard.pr.additions = summaryR.value.additions;
-    dashboard.pr.deletions = summaryR.value.deletions;
-    if (summaryR.value.title) {
-      dashboard.pr.title = summaryR.value.title;
-    }
-  }
-
-  if (checksR.status === "fulfilled") {
-    dashboard.pr.ciChecks = checksR.value.map((c) => ({
-      name: c.name,
-      status: c.status,
-      url: c.url,
-    }));
-  }
-
-  if (ciR.status === "fulfilled") {
-    dashboard.pr.ciStatus = ciR.value;
-  }
-
-  if (reviewR.status === "fulfilled") {
-    dashboard.pr.reviewDecision = reviewR.value;
-  }
-
-  if (mergeR.status === "fulfilled") {
-    dashboard.pr.mergeability = mergeR.value;
-  } else {
-    // Mergeability failed — mark as unavailable
-    dashboard.pr.mergeability.blockers = ["Merge status unavailable"];
-  }
-
-  if (commentsR.status === "fulfilled") {
-    const comments = commentsR.value;
-    dashboard.pr.unresolvedThreads = comments.length;
-    dashboard.pr.unresolvedComments = comments.map((c) => ({
-      url: c.url,
-      path: c.path ?? "",
-      author: c.author,
-      body: c.body,
-    }));
-  }
-
-  // Add rate-limit warning blocker if most requests failed
-  // (but we still applied any successful results above)
-  if (
-    mostFailed &&
-    !dashboard.pr.mergeability.blockers.includes("API rate limited or unavailable")
-  ) {
-    dashboard.pr.mergeability.blockers.push("API rate limited or unavailable");
-  }
-
-  // If rate limited, cache the partial data with a long TTL (5 min) so we stop
-  // hammering the API on every page load. The rate-limit blocker flag tells the
-  // UI to show stale-data warnings instead of making decisions on bad data.
-  if (mostFailed) {
-    const rateLimitedData: PREnrichmentData = {
-      state: dashboard.pr.state,
-      title: dashboard.pr.title,
-      additions: dashboard.pr.additions,
-      deletions: dashboard.pr.deletions,
-      ciStatus: dashboard.pr.ciStatus,
-      ciChecks: dashboard.pr.ciChecks,
-      reviewDecision: dashboard.pr.reviewDecision,
-      mergeability: dashboard.pr.mergeability,
-      unresolvedThreads: dashboard.pr.unresolvedThreads,
-      unresolvedComments: dashboard.pr.unresolvedComments,
-    };
-    prCache.set(cacheKey, rateLimitedData, 60 * 60_000); // 60 min — GitHub rate limit resets hourly
+  const data = await fetchPREnrichmentData(scm, pr, cacheKey);
+  if (data && dashboard.pr) {
+    applyPREnrichment(dashboard, data);
     return true;
   }
-
-  const cacheData: PREnrichmentData = {
-    state: dashboard.pr.state,
-    title: dashboard.pr.title,
-    additions: dashboard.pr.additions,
-    deletions: dashboard.pr.deletions,
-    ciStatus: dashboard.pr.ciStatus,
-    ciChecks: dashboard.pr.ciChecks,
-    reviewDecision: dashboard.pr.reviewDecision,
-    mergeability: dashboard.pr.mergeability,
-    unresolvedThreads: dashboard.pr.unresolvedThreads,
-    unresolvedComments: dashboard.pr.unresolvedComments,
-  };
-  prCache.set(cacheKey, cacheData);
-  return true;
+  return false;
 }
+
+function applyPREnrichment(dashboard: DashboardSession, data: PREnrichmentData): void {
+  if (!dashboard.pr) return;
+  dashboard.pr.state = data.state;
+  dashboard.pr.title = data.title;
+  dashboard.pr.additions = data.additions;
+  dashboard.pr.deletions = data.deletions;
+  dashboard.pr.ciStatus = data.ciStatus;
+  dashboard.pr.ciChecks = data.ciChecks;
+  dashboard.pr.reviewDecision = data.reviewDecision;
+  dashboard.pr.mergeability = data.mergeability;
+  dashboard.pr.unresolvedThreads = data.unresolvedThreads;
+  dashboard.pr.unresolvedComments = data.unresolvedComments;
+}
+
 
 /** Enrich a DashboardSession's issue label using the tracker plugin. */
 export function enrichSessionIssue(
