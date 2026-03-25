@@ -315,9 +315,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (prState === PR_STATE.MERGED) return "merged";
         if (prState === PR_STATE.CLOSED) return "killed";
 
-        // Check CI
-        const ciStatus = await scm.getCISummary(session.pr);
-        if (ciStatus === CI_STATUS.FAILING) return "ci_failed";
+        // Check CI (skip if ci-failed reaction is disabled — saves API calls when no CI)
+        const projectReactions = project?.reactions ?? {};
+        const globalReactions = config.reactions;
+        const ciFailed = { ...globalReactions["ci-failed"], ...projectReactions["ci-failed"] };
+        if (ciFailed?.auto !== false) {
+          const ciStatus = await scm.getCISummary(session.pr);
+          if (ciStatus === CI_STATUS.FAILING) return "ci_failed";
+        }
 
         // Check reviews
         const reviewDecision = await scm.getReviewDecision(session.pr);
