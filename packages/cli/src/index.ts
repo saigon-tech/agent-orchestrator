@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execSync } from "node:child_process";
 import { Command } from "commander";
 import { registerInit } from "./commands/init.js";
 import { registerStatus } from "./commands/status.js";
@@ -18,10 +19,20 @@ import { getConfigInstruction } from "./lib/config-instruction.js";
 
 const program = new Command();
 
+function getBuildVersion(): string {
+  try {
+    const hash = execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim();
+    return `0.1.0 (${branch}@${hash})`;
+  } catch {
+    return "0.1.0";
+  }
+}
+
 program
   .name("ao")
   .description("Agent Orchestrator — manage parallel AI coding agents")
-  .version("0.1.0");
+  .version(getBuildVersion());
 
 registerInit(program);
 registerStart(program);
