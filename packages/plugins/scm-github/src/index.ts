@@ -36,6 +36,15 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+/** Thrown when GitHub API rate limit is hit; detected by the lifecycle manager. */
+export class GitHubRateLimitError extends Error {
+  readonly isRateLimit = true;
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "GitHubRateLimitError";
+  }
+}
+
 /** Known bot logins that produce automated review comments */
 const BOT_AUTHORS = new Set([
   "cursor[bot]",
@@ -65,7 +74,11 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`${bin} ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    const msg = (err as Error).message ?? "";
+    if (/rate limit/i.test(msg) || /secondary rate/i.test(msg) || /429/i.test(msg)) {
+      throw new GitHubRateLimitError(`GitHub rate limit reached: ${msg}`, err);
+    }
+    throw new Error(`${bin} ${args.slice(0, 3).join(" ")} failed: ${msg}`, {
       cause: err,
     });
   }
