@@ -32,11 +32,20 @@ import {
   type Session,
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
+  type PRInfo,
+  type PRState,
+  type CIStatus,
+  type ReviewDecision,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import {
+  GLOBAL_PAUSE_UNTIL_KEY,
+  GLOBAL_PAUSE_REASON_KEY,
+  GLOBAL_PAUSE_SOURCE_KEY,
+} from "./global-pause.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -173,6 +182,46 @@ function transitionLogLevel(status: SessionStatus): "info" | "warn" | "error" {
   return "info";
 }
 
+/** Run async tasks in batches of `limit` to avoid concurrent bursts. */
+async function pLimit<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<Array<PromiseSettledResult<T>>> {
+  const results: Array<PromiseSettledResult<T>> = [];
+  for (let i = 0; i < tasks.length; i += limit) {
+    const batch = tasks.slice(i, i + limit).map((t) =>
+      t().then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason) => ({ status: "rejected" as const, reason }),
+      ),
+    );
+    results.push(...(await Promise.all(batch)));
+  }
+  return results;
+}
+
+/** Wrap an SCM instance with a per-poll-cycle cache that deduplicates identical PR queries. */
+function createPollCycleScmCache(scm: SCM): SCM {
+  const prStateCache = new Map<number, Promise<PRState>>();
+  const ciCache = new Map<number, Promise<CIStatus>>();
+  const reviewCache = new Map<number, Promise<ReviewDecision>>();
+  return {
+    ...scm,
+    getPRState(pr: PRInfo) {
+      if (!prStateCache.has(pr.number)) prStateCache.set(pr.number, scm.getPRState(pr));
+      return prStateCache.get(pr.number)!;
+    },
+    getCISummary(pr: PRInfo) {
+      if (!ciCache.has(pr.number)) ciCache.set(pr.number, scm.getCISummary(pr));
+      return ciCache.get(pr.number)!;
+    },
+    getReviewDecision(pr: PRInfo) {
+      if (!reviewCache.has(pr.number)) reviewCache.set(pr.number, scm.getReviewDecision(pr));
+      return reviewCache.get(pr.number)!;
+    },
+  };
+}
+
 export interface LifecycleManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
@@ -194,9 +243,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const reviewBacklogLastChecked = new Map<SessionId, number>(); // sessionId → timestamp ms
+  const REVIEW_BACKLOG_INTERVAL_MS = 90_000; // throttle to every ~3 poll ticks
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+
+  /** Duck-type check for GitHubRateLimitError from the scm-github plugin. */
+  function isRateLimitError(err: unknown): boolean {
+    return (
+      err instanceof Error &&
+      "isRateLimit" in err &&
+      (err as { isRateLimit: boolean }).isRateLimit === true
+    );
+  }
+
+  /** Write a global pause to the orchestrator metadata so new spawns are blocked. */
+  function applyRateLimitPause(session: Session, pauseMinutes = 5): void {
+    const project = config.projects[session.projectId];
+    if (!project) return;
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const orchestratorId = `${project.sessionPrefix}-orchestrator`;
+    const until = new Date(Date.now() + pauseMinutes * 60_000);
+    updateMetadata(sessionsDir, orchestratorId, {
+      [GLOBAL_PAUSE_UNTIL_KEY]: until.toISOString(),
+      [GLOBAL_PAUSE_REASON_KEY]: "GitHub API rate limit reached",
+      [GLOBAL_PAUSE_SOURCE_KEY]: session.id,
+    });
+  }
 
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
@@ -210,7 +284,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   }
 
   /** Determine current status for a session by polling plugins. */
-  async function determineStatus(session: Session): Promise<SessionStatus> {
+  async function determineStatus(session: Session, scmOverride?: SCM): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
     if (!project) return session.status;
 
@@ -221,7 +295,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = scmOverride ?? (project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null);
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
@@ -549,6 +623,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
+    // Throttle expensive API calls (GraphQL + paginated REST) to every ~3 poll ticks.
+    // Always run immediately on a status transition so new comments are never missed.
+    const isTransition = oldStatus !== newStatus;
+    const lastChecked = reviewBacklogLastChecked.get(session.id) ?? 0;
+    if (!isTransition && Date.now() - lastChecked < REVIEW_BACKLOG_INTERVAL_MS) {
+      return;
+    }
+    reviewBacklogLastChecked.set(session.id, Date.now());
+
     const humanReactionKey = "changes-requested";
     const automatedReactionKey = "bugbot-comments";
 
@@ -713,7 +796,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const tracked = states.get(session.id);
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
-    const newStatus = await determineStatus(session);
+
+    // Wrap SCM with a per-cycle cache so duplicate calls (getPRState, getCISummary)
+    // within one checkSession invocation reuse the same Promise instead of firing again.
+    const project = config.projects[session.projectId];
+    const rawScm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const cachedScm = rawScm ? createPollCycleScmCache(rawScm) : null;
+
+    let newStatus: SessionStatus;
+    try {
+      newStatus = await determineStatus(session, cachedScm ?? undefined);
+    } catch (err) {
+      if (isRateLimitError(err)) {
+        applyRateLimitPause(session);
+      }
+      return; // preserve current status on any error
+    }
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
 
     if (newStatus !== oldStatus) {
@@ -816,8 +914,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         return tracked !== undefined && tracked !== s.status;
       });
 
-      // Poll all sessions concurrently
-      await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+      // Poll sessions in batches of 2 to prevent concurrent GitHub API bursts.
+      await pLimit(sessionsToCheck.map((s) => () => checkSession(s)), 2);
 
       // Prune stale entries from states and reactionTrackers for sessions
       // that no longer appear in the session list (e.g., after kill/cleanup)
@@ -831,6 +929,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of reviewBacklogLastChecked.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          reviewBacklogLastChecked.delete(sessionId);
         }
       }
 
