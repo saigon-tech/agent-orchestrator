@@ -64,6 +64,13 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       mkdirSync(projectWorktreeDir, { recursive: true });
 
+      // Prune stale worktree entries before creating — handles orphaned dirs from crashed sessions
+      try {
+        await git(repoPath, "worktree", "prune");
+      } catch {
+        // Best effort
+      }
+
       // Fetch latest from remote
       try {
         await git(repoPath, "fetch", "origin", "--quiet");
@@ -89,14 +96,33 @@ export function create(config?: Record<string, unknown>): Workspace {
         try {
           await git(worktreePath, "checkout", cfg.branch);
         } catch (checkoutErr: unknown) {
+          const checkoutMsg =
+            checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
+
+          // Detect stale worktree holding the branch: "already checked out at '<path>'"
+          const staleMatch = checkoutMsg.match(/already checked out at '([^']+)'/);
+          if (staleMatch) {
+            const stalePath = staleMatch[1];
+            try {
+              await git(repoPath, "worktree", "remove", "--force", stalePath);
+              await git(worktreePath, "checkout", cfg.branch);
+              return {
+                path: worktreePath,
+                branch: cfg.branch,
+                sessionId: cfg.sessionId,
+                projectId: cfg.projectId,
+              };
+            } catch {
+              // Recovery failed — fall through to cleanup and rethrow
+            }
+          }
+
           // Checkout failed — remove the orphaned worktree before rethrowing
           try {
             await git(repoPath, "worktree", "remove", "--force", worktreePath);
           } catch {
             // Best-effort cleanup
           }
-          const checkoutMsg =
-            checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
           throw new Error(`Failed to checkout branch "${cfg.branch}" in worktree: ${checkoutMsg}`, {
             cause: checkoutErr,
           });
