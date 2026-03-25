@@ -43,7 +43,6 @@ import {
   waitForPortAndOpen,
   isPortAvailable,
   findFreePort,
-  MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
@@ -509,14 +508,9 @@ async function runStartup(
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
     if (!(await isPortAvailable(port))) {
-      const newPort = await findFreePort(port + 1);
-      if (newPort === null) {
-        throw new Error(
-          `Port ${port} is busy and no free port found in range ${port + 1}–${port + MAX_PORT_SCAN}. Free port ${port} or set a different 'port' in agent-orchestrator.yaml.`,
-        );
-      }
-      console.log(chalk.yellow(`Port ${port} is busy — using ${newPort} instead.`));
-      port = newPort;
+      throw new Error(
+        `Port ${port} is busy. Free port ${port} or set a different 'port' in agent-orchestrator.yaml.`,
+      );
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
     await preflight.checkBuilt(webDir);
