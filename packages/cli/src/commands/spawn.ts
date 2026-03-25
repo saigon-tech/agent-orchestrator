@@ -90,6 +90,7 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   claimOptions?: SpawnClaimOptions,
+  settings?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -101,6 +102,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      settings,
     });
 
     let branchStr = session.branch ?? "";
@@ -163,6 +165,7 @@ export function registerSpawn(program: Command): void {
     .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .option("--settings <path>", "Override settings file for this session (e.g. .claude/settings.sonnet.json)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
@@ -174,6 +177,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          settings?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           decompose?: boolean;
@@ -253,7 +257,7 @@ export function registerSpawn(program: Command): void {
 
             if (leaves.length <= 1) {
               console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.settings);
             } else {
               // Create child issues and spawn sessions with lineage context
               const sm = await getSessionManager(config);
@@ -269,6 +273,7 @@ export function registerSpawn(program: Command): void {
                     lineage: leaf.lineage,
                     siblings,
                     agent: opts.agent,
+                    settings: opts.settings,
                   });
                   console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
                 } catch (err) {
@@ -280,7 +285,7 @@ export function registerSpawn(program: Command): void {
               }
             }
           } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.settings);
           }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
@@ -296,7 +301,8 @@ export function registerBatchSpawn(program: Command): void {
     .description("Spawn sessions for multiple issues with duplicate detection")
     .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (issues: string[], opts: { open?: boolean }) => {
+    .option("--settings <path>", "Override settings file for all spawned sessions (e.g. .claude/settings.sonnet.json)")
+    .action(async (issues: string[], opts: { open?: boolean; settings?: string }) => {
       const config = loadConfig();
       let projectId: string;
 
@@ -364,7 +370,7 @@ export function registerBatchSpawn(program: Command): void {
         }
 
         try {
-          const session = await sm.spawn({ projectId, issueId: issue });
+          const session = await sm.spawn({ projectId, issueId: issue, settings: opts.settings });
           created.push({ session: session.id, issue });
           spawnedIssues.add(issue.toLowerCase());
           console.log(chalk.green(`  Created ${session.id} for ${issue}`));
