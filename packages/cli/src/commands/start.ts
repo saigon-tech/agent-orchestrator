@@ -439,6 +439,8 @@ export async function createConfigOnly(): Promise<void> {
 /**
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
+ * When detach=true, the process runs fully detached (stdio ignored, unref'd)
+ * so the parent can exit immediately after startup.
  */
 async function startDashboard(
   port: number,
@@ -446,6 +448,7 @@ async function startDashboard(
   configPath: string | null,
   terminalPort?: number,
   directTerminalPort?: number,
+  detach = false,
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
@@ -453,30 +456,28 @@ async function startDashboard(
   // monorepo. Published npm packages only have `dist-server/`.
   const isDevMode = existsSync(resolve(webDir, "server"));
 
+  const spawnOpts = detach
+    ? { cwd: webDir, stdio: "ignore" as const, detached: true, env }
+    : { cwd: webDir, stdio: "inherit" as const, detached: false, env };
+
   let child: ChildProcess;
   if (isDevMode) {
     // Monorepo development: use pnpm run dev (tsx, HMR, etc.)
-    child = spawn("pnpm", ["run", "dev"], {
-      cwd: webDir,
-      stdio: "inherit",
-      detached: false,
-      env,
-    });
+    child = spawn("pnpm", ["run", "dev"], spawnOpts);
   } else {
     // Production (installed from npm): use pre-built start-all script
-    child = spawn("node", [resolve(webDir, "dist-server", "start-all.js")], {
-      cwd: webDir,
-      stdio: "inherit",
-      detached: false,
-      env,
-    });
+    child = spawn("node", [resolve(webDir, "dist-server", "start-all.js")], spawnOpts);
   }
 
-  child.on("error", (err) => {
-    console.error(chalk.red("Dashboard failed to start:"), err.message);
-    // Emit synthetic exit so callers listening on "exit" can clean up
-    child.emit("exit", 1, null);
-  });
+  if (detach) {
+    child.unref();
+  } else {
+    child.on("error", (err) => {
+      console.error(chalk.red("Dashboard failed to start:"), err.message);
+      // Emit synthetic exit so callers listening on "exit" can clean up
+      child.emit("exit", 1, null);
+    });
+  }
 
   return child;
 }
@@ -489,7 +490,7 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
+  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; detach?: boolean },
 ): Promise<number> {
   const sessionId = `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
@@ -531,6 +532,7 @@ async function runStartup(
       config.configPath,
       config.terminalPort,
       config.directTerminalPort,
+      opts?.detach,
     );
     spinner.succeed(`Dashboard starting on http://localhost:${port}`);
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
@@ -626,8 +628,8 @@ async function runStartup(
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
-  // Keep dashboard process alive if it was started
-  if (dashboardProcess) {
+  // Keep dashboard process alive if it was started (and not detached)
+  if (dashboardProcess && !opts?.detach) {
     dashboardProcess.on("exit", (code) => {
       if (openAbort) openAbort.abort();
       if (code !== 0 && code !== null) {
@@ -679,6 +681,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("--detach", "Run in background (detach from terminal after startup)")
     .action(
       async (
         projectArg?: string,
@@ -686,6 +689,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          detach?: boolean;
         },
       ) => {
         try {
@@ -850,6 +854,12 @@ export function registerStart(program: Command): void {
             startedAt: new Date().toISOString(),
             projects: Object.keys(config.projects),
           });
+
+          // In detach mode, exit after startup so the terminal is freed.
+          // The dashboard and lifecycle worker continue in the background.
+          if (opts?.detach) {
+            process.exit(0);
+          }
         } catch (err) {
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);
