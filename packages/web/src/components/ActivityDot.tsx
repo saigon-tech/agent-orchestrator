@@ -38,8 +38,8 @@ export function ActivityDot({ activity, dotOnly = false, size = 6 }: ActivityDot
     return (
       <div
         className={cn(
-          "shrink-0 rounded-full",
-          isPulsing && "animate-[activity-pulse_2s_ease-in-out_infinite]",
+          "shrink-0",
+          isPulsing && "animate-[activity-pulse_1s_steps(1)_infinite]",
         )}
         style={{ width: size, height: size, background: c.dot }}
       />
@@ -48,13 +48,13 @@ export function ActivityDot({ activity, dotOnly = false, size = 6 }: ActivityDot
 
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5"
+      className="inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5"
       style={{ background: c.bg }}
     >
       <span
         className={cn(
-          "h-1.5 w-1.5 shrink-0 rounded-full",
-          isPulsing && "animate-[activity-pulse_2s_ease-in-out_infinite]",
+          "h-1.5 w-1.5 shrink-0",
+          isPulsing && "animate-[activity-pulse_1s_steps(1)_infinite]",
         )}
         style={{ background: c.dot }}
       />

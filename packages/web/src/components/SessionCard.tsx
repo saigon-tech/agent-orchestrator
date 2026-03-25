@@ -15,6 +15,7 @@ import { getSessionTitle } from "@/lib/format";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
+import { OfficeScene } from "./OfficeScene";
 
 interface SessionCardProps {
   session: DashboardSession;
@@ -76,10 +77,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         pr?.state === "merged" && "opacity-55",
       )}
       style={{
-        borderRadius: 7,
         background:
           expanded && !isReadyToMerge
-            ? "linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%)"
+            ? "#111c2a"
             : undefined,
       }}
       onClick={(e) => {
@@ -87,138 +87,150 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         setExpanded(!expanded);
       }}
     >
-      {/* Header row: dot + session ID + terminal link */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <ActivityDot activity={session.activity} />
-        <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
-          {session.id}
-        </span>
-        <div className="flex-1" />
-        {isRestorable && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRestore?.(session.id);
-            }}
-            className="rounded border border-[rgba(88,166,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
-          >
-            restore
-          </button>
-        )}
-        {!isTerminal && (
-          <a
-            href={`/sessions/${encodeURIComponent(session.id)}`}
-            onClick={(e) => e.stopPropagation()}
-            className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
-          >
-            terminal
-          </a>
-        )}
-      </div>
-
-      {/* Title — its own row, bigger, can wrap */}
-      <div className="px-4 pb-3">
-        <p
-          className={cn(
-            "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] overflow-hidden",
-            level === "working"
-              ? "text-[13px] font-medium text-[var(--color-text-secondary)]"
-              : "text-[14px] font-semibold text-[var(--color-text-primary)]",
-          )}
-        >
-          {title}
-        </p>
-      </div>
-
-      {/* Meta row: branch + PR pills */}
-      <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
-        {session.branch && (
-          <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
-            {session.branch}
-          </span>
-        )}
-        {session.branch && pr && (
-          <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
-        )}
-        {pr && <PRStatus pr={pr} />}
-      </div>
-
-      {/* Rate limited indicator */}
-      {rateLimited && pr?.state === "open" && (
-        <div className="px-4 pb-3">
-          <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
-            <svg
-              className="h-3 w-3 text-[var(--color-text-tertiary)]"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 8v4M12 16h.01" />
-            </svg>
-            PR data rate limited
-          </span>
+      <div className="flex">
+        {/* Office scene — sprite-based pixel workstation */}
+        <div className="flex items-center justify-center border-r border-[var(--color-border-subtle)] px-3 py-3">
+          <OfficeScene activity={session.activity} sessionId={session.id} />
         </div>
-      )}
 
-      {/* Merge button or alert tags */}
-      {!rateLimited && (alerts.length > 0 || isReadyToMerge) && (
-        <div className="px-4 pb-3.5 pt-0.5">
-          {isReadyToMerge && pr ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onMerge?.(pr.number);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-[5px] border-0 bg-[var(--color-status-ready)] px-3 py-1.5 text-[12px] font-semibold text-[var(--color-text-inverse)] transition-[filter,transform] duration-[100ms] hover:-translate-y-px hover:brightness-110"
-            >
-              <svg
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
+        {/* Card content */}
+        <div className="min-w-0 flex-1">
+          {/* Header row: session ID + terminal link */}
+          <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
+            <ActivityDot activity={session.activity} />
+            <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
+              {session.id}
+            </span>
+            <div className="flex-1" />
+            {isRestorable && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRestore?.(session.id);
+                }}
+                className="border border-[rgba(0,170,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] hover:bg-[rgba(0,170,255,0.1)]"
               >
-                <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-              Merge PR #{pr.number}
-            </button>
-          ) : (
-            <div className="flex flex-wrap gap-1">
-              {alerts.map((alert) => (
-                <span key={alert.key} className="inline-flex items-center gap-1">
-                  <a
-                    href={alert.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium hover:brightness-125 hover:no-underline",
-                      alert.className,
-                    )}
+                restore
+              </button>
+            )}
+            {!isTerminal && (
+              <a
+                href={`/sessions/${encodeURIComponent(session.id)}`}
+                onClick={(e) => e.stopPropagation()}
+                className="border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
+              >
+                terminal
+              </a>
+            )}
+          </div>
+
+          {/* Title */}
+          <div className="px-3 pb-2">
+            <p
+              className={cn(
+                "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] overflow-hidden",
+                level === "working"
+                  ? "text-[13px] font-medium text-[var(--color-text-secondary)]"
+                  : "text-[14px] font-semibold text-[var(--color-text-primary)]",
+              )}
+            >
+              {title}
+            </p>
+          </div>
+
+          {/* Meta row: branch + PR pills */}
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2">
+            {session.branch && (
+              <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
+                {session.branch}
+              </span>
+            )}
+            {session.branch && pr && (
+              <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
+            )}
+            {pr && <PRStatus pr={pr} />}
+          </div>
+
+          {/* Rate limited indicator */}
+          {rateLimited && pr?.state === "open" && (
+            <div className="px-3 pb-2">
+              <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                <svg
+                  className="h-3 w-3 text-[var(--color-text-tertiary)]"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4M12 16h.01" />
+                </svg>
+                PR data rate limited
+              </span>
+            </div>
+          )}
+
+          {/* Merge button or alert tags */}
+          {!rateLimited && (alerts.length > 0 || isReadyToMerge) && (
+            <div className="px-3 pb-2.5 pt-0.5">
+              {isReadyToMerge && pr ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMerge?.(pr.number);
+                  }}
+                  className="inline-flex items-center gap-1.5 border-0 bg-[var(--color-status-ready)] px-3 py-1.5 text-[12px] font-semibold text-[var(--color-text-inverse)] hover:brightness-110"
+                >
+                  <svg
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
                   >
-                    {alert.count !== undefined && <span className="font-bold">{alert.count}</span>}
-                    {alert.label}
-                  </a>
-                  {alert.actionLabel && session.activity !== "active" && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAction(alert.key, alert.actionMessage ?? "");
-                      }}
-                      disabled={sendingAction === alert.key}
-                      className="rounded border border-[rgba(88,166,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50"
-                    >
-                      {sendingAction === alert.key ? "sent!" : alert.actionLabel}
-                    </button>
-                  )}
-                </span>
-              ))}
+                    <path d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                  Merge PR #{pr.number}
+                </button>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {alerts.map((alert) => (
+                    <span key={alert.key} className="inline-flex items-center gap-1">
+                      <a
+                        href={alert.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={cn(
+                          "inline-flex items-center gap-1 border px-2 py-0.5 text-[11px] font-medium hover:brightness-125 hover:no-underline",
+                          alert.className,
+                        )}
+                      >
+                        {alert.count !== undefined && (
+                          <span className="font-bold">{alert.count}</span>
+                        )}
+                        {alert.label}
+                      </a>
+                      {alert.actionLabel && session.activity !== "active" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAction(alert.key, alert.actionMessage ?? "");
+                          }}
+                          disabled={sendingAction === alert.key}
+                          className="border border-[rgba(0,170,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] hover:bg-[rgba(0,170,255,0.1)] disabled:opacity-50"
+                        >
+                          {sendingAction === alert.key ? "sent!" : alert.actionLabel}
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Expandable detail panel */}
       {expanded && (
