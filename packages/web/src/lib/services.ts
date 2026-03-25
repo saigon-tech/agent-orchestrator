@@ -39,6 +39,7 @@ import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
 import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
+import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -78,6 +79,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
+  registry.register(pluginTrackerGithub);
 
   const sessionManager = createSessionManager({ config, registry });
 
