@@ -1,0 +1,46 @@
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+port: 3000
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+
+projects:
+  # Replace "my-project" with a short slug for your project (used internally)
+  my-project:
+    name: My Project
+    sessionPrefix: mp         # short prefix for tmux session names, e.g. "mp-1", "mp-2"
+    repo: org/repo-name       # GitHub repo in "owner/repo" format
+    path: ~/path/to/repo      # absolute path to the cloned repo on this machine
+    defaultBranch: main
+
+    # Orchestrator uses a more powerful model for planning & delegation
+    orchestrator:
+      agentConfig:
+        model: claude-opus-4-6
+        settings: .claude/settings.opus.json   # optional: custom Claude settings file
+
+    # Workers use a faster model for execution
+    worker:
+      agentConfig:
+        model: claude-sonnet-4-6
+
+    # Rules file injected into every agent prompt (orchestrator + workers)
+    agentRulesFile: .agent-rules.md
+
+    reactions:
+      ci-failed:
+        auto: false           # off — most projects don't have CI
+      changes-requested:
+        auto: true
+        action: send-to-agent
+      bugbot-comments:
+        auto: false           # off — only relevant if using Sentry BugBot
+      merge-conflicts:
+        auto: true
+        action: send-to-agent
+      approved-and-green:
+        auto: false           # set to true to enable auto-merge
