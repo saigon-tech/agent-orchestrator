@@ -3,6 +3,7 @@ import {
   readLastJsonlEntry,
   DEFAULT_READY_THRESHOLD_MS,
   type Agent,
+  type AgentResponse,
   type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityDetection,
@@ -259,7 +260,7 @@ async function findLatestSessionFile(projectDir: string): Promise<string | null>
 interface JsonlLine {
   type?: string;
   summary?: string;
-  message?: { content?: string; role?: string };
+  message?: { content?: string | Array<{ type?: string; text?: string }>; role?: string };
   // Cost/usage fields
   costUSD?: number;
   usage?: {
@@ -805,6 +806,52 @@ function createClaudeCodeAgent(): Agent {
         agentSessionId,
         cost: extractCost(lines),
       };
+    },
+
+    async getLastResponse(session: Session): Promise<AgentResponse | null> {
+      if (!session.workspacePath) return null;
+
+      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+
+      const sessionFile = await findLatestSessionFile(projectDir);
+      if (!sessionFile) return null;
+
+      const lines = await parseJsonlFileTail(sessionFile);
+      if (lines.length === 0) return null;
+
+      // Walk backwards to find the last assistant message with text content
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (line?.type === "assistant" && line.message?.content) {
+          const content = line.message.content;
+          // content can be a string or an array of content blocks
+          let text: string;
+          if (typeof content === "string") {
+            text = content;
+          } else if (Array.isArray(content)) {
+            // Extract text blocks from content array (Claude API format)
+            text = (content as Array<{ type?: string; text?: string }>)
+              .filter((block) => block.type === "text" && block.text)
+              .map((block) => block.text!)
+              .join("\n");
+          } else {
+            continue;
+          }
+          if (text.trim().length === 0) continue;
+
+          // Use the file's mtime as a reasonable timestamp for the last response
+          let timestamp: Date;
+          try {
+            const s = await stat(sessionFile);
+            timestamp = s.mtime;
+          } catch {
+            timestamp = new Date();
+          }
+          return { message: text, timestamp };
+        }
+      }
+      return null;
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {

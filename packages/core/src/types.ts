@@ -317,6 +317,13 @@ export interface Agent {
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
 
   /**
+   * Optional: get the last assistant response from the agent's conversation history.
+   * Reads structured data (e.g. JSONL) rather than raw terminal output.
+   * Returns null if no response is found or the agent doesn't support this.
+   */
+  getLastResponse?(session: Session): Promise<AgentResponse | null>;
+
+  /**
    * Optional: get a launch command that resumes a previous session.
    * Returns null if no previous session is found (caller falls back to getLaunchCommand).
    */
@@ -404,6 +411,14 @@ export interface CostEstimate {
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
+}
+
+/** Structured agent response extracted from conversation history (e.g. JSONL) */
+export interface AgentResponse {
+  /** The agent's text response */
+  message: string;
+  /** When this response was generated */
+  timestamp: Date;
 }
 
 // =============================================================================
