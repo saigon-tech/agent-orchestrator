@@ -1173,6 +1173,7 @@ export interface SessionMetadata {
   summary?: string;
   project?: string;
   agent?: string; // Agent plugin name (e.g. "codex", "claude-code") — persisted for lifecycle
+  model?: string; // Model used (e.g. "claude-sonnet-4-6") — persisted at spawn time
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;

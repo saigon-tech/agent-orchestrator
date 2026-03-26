@@ -101,6 +101,11 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
               {session.id}
             </span>
+            {session.metadata.model && (
+              <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-tertiary)]">
+                {session.metadata.model}
+              </span>
+            )}
             <div className="flex-1" />
             {isRestorable && (
               <button
