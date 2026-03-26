@@ -1154,6 +1154,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
         agent: selection.agentName, // Persist agent name for lifecycle manager
+        model: selection.model,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
@@ -1434,6 +1435,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         tmuxName,
         project: orchestratorConfig.projectId,
         agent: selection.agentName,
+        model: selection.model,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusableOpenCodeSessionId,
@@ -2308,6 +2310,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         summary: raw["summary"],
         project: raw["project"],
         agent: raw["agent"],
+        model: raw["model"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
         opencodeSessionId: raw["opencodeSessionId"],
